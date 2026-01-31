@@ -56,265 +56,265 @@ jobs:
         run: |
           set -euo pipefail
           cat > keybox_checker.py <<'PYCODE'
-from __future__ import annotations
-import argparse, sys, json
-from datetime import datetime, timezone
-from lxml import etree
-from cryptography.hazmat.primitives.serialization import load_pem_private_key
-from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding
-from cryptography import x509
+          from __future__ import annotations
+          import argparse, sys, json
+          from datetime import datetime, timezone
+          from lxml import etree
+          from cryptography.hazmat.primitives.serialization import load_pem_private_key
+          from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding
+          from cryptography import x509
 
-def load_revocations(path):
-    if not path:
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            d = json.load(f)
-        # Map serial (lowercase hex) -> policy string
-        return {str(s).lower(): d.get("policy", {}).get(str(s), "REVOKED") for s in d.get("serials", [])}
-    except Exception as e:
-        print(f"⚠️ Error reading revocations: {e}")
-        return {}
+          def load_revocations(path):
+              if not path:
+                  return {}
+              try:
+                  with open(path, "r", encoding="utf-8") as f:
+                      d = json.load(f)
+                  # Map serial (lowercase hex) -> policy string
+                  return {str(s).lower(): d.get("policy", {}).get(str(s), "REVOKED") for s in d.get("serials", [])}
+              except Exception as e:
+                  print(f"⚠️ Error reading revocations: {e}")
+                  return {}
 
-def load_certs(pems):
-    certs = []
-    for pem in pems:
-        if not pem:
-            continue
-        try:
-            certs.append(x509.load_pem_x509_certificate(pem))
-        except Exception as e:
-            print(f"⚠️ Failed to load certificate: {e}")
-    return certs
+          def load_certs(pems):
+              certs = []
+              for pem in pems:
+                  if not pem:
+                      continue
+                  try:
+                      certs.append(x509.load_pem_x509_certificate(pem))
+                  except Exception as e:
+                      print(f"⚠️ Failed to load certificate: {e}")
+              return certs
 
-def check_private_key(alg, pem):
-    try:
-        key = load_pem_private_key(pem, password=None)
-        if alg == "ecdsa":
-            return isinstance(key, ec.EllipticCurvePrivateKey)
-        if alg == "rsa":
-            return isinstance(key, rsa.RSAPrivateKey)
-    except Exception:
-        pass
-    return False
+          def check_private_key(alg, pem):
+              try:
+                  key = load_pem_private_key(pem, password=None)
+                  if alg == "ecdsa":
+                      return isinstance(key, ec.EllipticCurvePrivateKey)
+                  if alg == "rsa":
+                      return isinstance(key, rsa.RSAPrivateKey)
+              except Exception:
+                  pass
+              return False
 
-def algo_name(cert):
-    sig = (getattr(cert.signature_algorithm_oid, "_name", "") or "").lower()
-    try:
-        h = cert.signature_hash_algorithm.name.upper()
-    except Exception:
-        h = "UNKNOWN"
-    if "ecdsa" in sig:
-        return f"ECDSA with {h}"
-    if "rsa" in sig or "rsassa" in sig:
-        return f"RSA with {h}"
-    return f"{sig} ({h})".strip()
+          def algo_name(cert):
+              sig = (getattr(cert.signature_algorithm_oid, "_name", "") or "").lower()
+              try:
+                  h = cert.signature_hash_algorithm.name.upper()
+              except Exception:
+                  h = "UNKNOWN"
+              if "ecdsa" in sig:
+                  return f"ECDSA with {h}"
+              if "rsa" in sig or "rsassa" in sig:
+                  return f"RSA with {h}"
+              return f"{sig} ({h})".strip()
 
-def subject_str(cert):
-    parts = []
-    for r in cert.subject.rdns:
-        for a in r:
-            n = a.oid._name or a.oid.dotted_string
-            if n and n.lower() in ("serialnumber", "title"):
-                parts.append(f"{n}={a.value}")
-    return ", ".join(parts) if parts else cert.subject.rfc4514_string()
+          def subject_str(cert):
+              parts = []
+              for r in cert.subject.rdns:
+                  for a in r:
+                      n = a.oid._name or a.oid.dotted_string
+                      if n and n.lower() in ("serialnumber", "title"):
+                          parts.append(f"{n}={a.value}")
+              return ", ".join(parts) if parts else cert.subject.rfc4514_string()
 
-def issuer_str(cert):
-    parts = []
-    for r in cert.issuer.rdns:
-        for a in r:
-            n = a.oid._name or a.oid.dotted_string
-            if n and n.lower() in ("serialnumber", "title"):
-                parts.append(f"{n}={a.value}")
-    return ", ".join(parts) if parts else cert.issuer.rfc4514_string()
+          def issuer_str(cert):
+              parts = []
+              for r in cert.issuer.rdns:
+                  for a in r:
+                      n = a.oid._name or a.oid.dotted_string
+                      if n and n.lower() in ("serialnumber", "title"):
+                          parts.append(f"{n}={a.value}")
+              return ", ".join(parts) if parts else cert.issuer.rfc4514_string()
 
-def verify_chain(certs):
-    """
-    Verifikasi sederhana:
-    - Signature diverifikasi menggunakan public key issuer yang ditemukan dalam chain.
-    - Cek masa berlaku (timezone-aware).
-    """
-    res = {}
-    for i, c in enumerate(certs):
-        checks = {
-            "serial": True,
-            "subject": True,
-            "issuer": True,
-            "signature": False,
-            "not_expired": False,
-            "in_chain": True,
-        }
-        now = datetime.now(timezone.utc)
-        try:
-            # Gunakan *_utc properties untuk menghindari DeprecationWarning
-            try:
-                nb = c.not_valid_before_utc
-                na = c.not_valid_after_utc
-            except AttributeError:
-                nb = c.not_valid_before.replace(tzinfo=timezone.utc)
-                na = c.not_valid_after.replace(tzinfo=timezone.utc)
-            checks["not_expired"] = (nb <= now <= na)
-        except Exception:
-            checks["not_expired"] = False
+          def verify_chain(certs):
+              """
+              Verifikasi sederhana:
+              - Signature diverifikasi menggunakan public key issuer yang ditemukan dalam chain.
+              - Cek masa berlaku (timezone-aware).
+              """
+              res = {}
+              for i, c in enumerate(certs):
+                  checks = {
+                      "serial": True,
+                      "subject": True,
+                      "issuer": True,
+                      "signature": False,
+                      "not_expired": False,
+                      "in_chain": True,
+                  }
+                  now = datetime.now(timezone.utc)
+                  try:
+                      # Gunakan *_utc properties untuk menghindari DeprecationWarning
+                      try:
+                          nb = c.not_valid_before_utc
+                          na = c.not_valid_after_utc
+                      except AttributeError:
+                          nb = c.not_valid_before.replace(tzinfo=timezone.utc)
+                          na = c.not_valid_after.replace(tzinfo=timezone.utc)
+                      checks["not_expired"] = (nb <= now <= na)
+                  except Exception:
+                      checks["not_expired"] = False
 
-        # Cari issuer di dalam list certs
-        issuer = None
-        if c.issuer == c.subject:
-            # Self-signed (Root)
-            issuer = c
-        else:
-            # Cari issuer berdasarkan Subject match
-            for candidate in certs:
-                if candidate.subject == c.issuer:
-                    issuer = candidate
-                    break
+                  # Cari issuer di dalam list certs
+                  issuer = None
+                  if c.issuer == c.subject:
+                      # Self-signed (Root)
+                      issuer = c
+                  else:
+                      # Cari issuer berdasarkan Subject match
+                      for candidate in certs:
+                          if candidate.subject == c.issuer:
+                              issuer = candidate
+                              break
 
-        if issuer:
-            try:
-                pub = issuer.public_key()
-                if isinstance(pub, rsa.RSAPublicKey):
-                    pub.verify(
-                        c.signature,
-                        c.tbs_certificate_bytes,
-                        padding.PKCS1v15(),
-                        c.signature_hash_algorithm,
-                    )
-                else:
-                    pub.verify(
-                        c.signature,
-                        c.tbs_certificate_bytes,
-                        ec.ECDSA(c.signature_hash_algorithm),
-                    )
-                checks["signature"] = True
-            except Exception:
-                checks["signature"] = False
-        else:
-            # Issuer tidak ditemukan di chain yang diberikan
-            checks["in_chain"] = False
-            checks["signature"] = False
+                  if issuer:
+                      try:
+                          pub = issuer.public_key()
+                          if isinstance(pub, rsa.RSAPublicKey):
+                              pub.verify(
+                                  c.signature,
+                                  c.tbs_certificate_bytes,
+                                  padding.PKCS1v15(),
+                                  c.signature_hash_algorithm,
+                              )
+                          else:
+                              pub.verify(
+                                  c.signature,
+                                  c.tbs_certificate_bytes,
+                                  ec.ECDSA(c.signature_hash_algorithm),
+                              )
+                          checks["signature"] = True
+                      except Exception:
+                          checks["signature"] = False
+                  else:
+                      # Issuer tidak ditemukan di chain yang diberikan
+                      checks["in_chain"] = False
+                      checks["signature"] = False
 
-        res[i] = checks
-    return res
+                  res[i] = checks
+              return res
 
-def hex_serial(c): return f"{c.serial_number:x}"
-def fmt_dt(dt): return dt.strftime("%d/%b/%Y")
+          def hex_serial(c): return f"{c.serial_number:x}"
+          def fmt_dt(dt): return dt.strftime("%d/%b/%Y")
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("xml", help="Path ke KeyBox XML")
-    ap.add_argument("--revocations", help="Path JSON revocation (opsional)")
-    args = ap.parse_args()
+          def main():
+              ap = argparse.ArgumentParser()
+              ap.add_argument("xml", help="Path ke KeyBox XML")
+              ap.add_argument("--revocations", help="Path JSON revocation (opsional)")
+              args = ap.parse_args()
 
-    revmap = load_revocations(args.revocations)
+              revmap = load_revocations(args.revocations)
 
-    with open(args.xml, "rb") as f:
-        xml = f.read()
+              with open(args.xml, "rb") as f:
+                  xml = f.read()
 
-    try:
-        root = etree.fromstring(xml)
-    except Exception as e:
-        print(f"🔴 XML tidak valid: {e}")
-        sys.exit(2)
+              try:
+                  root = etree.fromstring(xml)
+              except Exception as e:
+                  print(f"🔴 XML tidak valid: {e}")
+                  sys.exit(2)
 
-    kboxes = root.findall(".//Keybox")
-    leaked = False
-    print(f"💾 File: {args.xml}\n")
-    if not kboxes:
-        print("🔴 Tidak ada <Keybox> di XML.")
-        sys.exit(1)
+              kboxes = root.findall(".//Keybox")
+              leaked = False
+              print(f"💾 File: {args.xml}\n")
+              if not kboxes:
+                  print("🔴 Tidak ada <Keybox> di XML.")
+                  sys.exit(1)
 
-    for kb_i, kb in enumerate(kboxes, start=1):
-        keys = kb.findall("./Key")
-        for ch_i, key in enumerate(keys, start=1):
-            alg = (key.get("algorithm") or "").lower()
-            print(f"🔑 Key Chain: #{ch_i}")
-            # Private Key
-            priv_node = key.find("./PrivateKey")
-            valid_pk = False
-            if priv_node is not None and (priv_node.text or "").strip():
-                leaked = True
-                pem = (priv_node.text or "").strip().encode()
-                valid_pk = check_private_key(alg, pem)
-                t = "EC" if alg == "ecdsa" else ("RSA" if alg == "rsa" else "Unknown")
-                print(f"{'✅' if valid_pk else '🔴'} {'Valid' if valid_pk else 'Invalid'} {t} Private Key.")
-            else:
-                print("⚠️ Tanpa Private Key di XML.")
+              for kb_i, kb in enumerate(kboxes, start=1):
+                  keys = kb.findall("./Key")
+                  for ch_i, key in enumerate(keys, start=1):
+                      alg = (key.get("algorithm") or "").lower()
+                      print(f"🔑 Key Chain: #{ch_i}")
+                      # Private Key
+                      priv_node = key.find("./PrivateKey")
+                      valid_pk = False
+                      if priv_node is not None and (priv_node.text or "").strip():
+                          leaked = True
+                          pem = (priv_node.text or "").strip().encode()
+                          valid_pk = check_private_key(alg, pem)
+                          t = "EC" if alg == "ecdsa" else ("RSA" if alg == "rsa" else "Unknown")
+                          print(f"{'✅' if valid_pk else '🔴'} {'Valid' if valid_pk else 'Invalid'} {t} Private Key.")
+                      else:
+                          print("⚠️ Tanpa Private Key di XML.")
 
-            # Certificate chain
-            cert_nodes = key.findall("./CertificateChain/Certificate")
-            pems = [(c.text or "").strip().encode() for c in cert_nodes]
-            certs = load_certs(pems)
-            chain = verify_chain(certs)
+                      # Certificate chain
+                      cert_nodes = key.findall("./CertificateChain/Certificate")
+                      pems = [(c.text or "").strip().encode() for c in cert_nodes]
+                      certs = load_certs(pems)
+                      chain = verify_chain(certs)
 
-            for i, c in enumerate(certs, start=1):
-                print(f"\n🔐 Certificate: #{i}")
-                s = hex_serial(c)
-                print(f"ℹ️ Serial: {s}.")
-                print(f"ℹ️ Subject: {subject_str(c)}.")
-                print(f"ℹ️ Issuer: {issuer_str(c)}.")
-                print(f"ℹ️ Signature Algorithm: {algo_name(c)}.")
-                # Gunakan *_utc untuk print juga
-                try:
-                    nb = c.not_valid_before_utc
-                    na = c.not_valid_after_utc
-                except AttributeError:
-                    nb = c.not_valid_before.replace(tzinfo=timezone.utc)
-                    na = c.not_valid_after.replace(tzinfo=timezone.utc)
-                print(f"ℹ️ Validity (GMT): From: {fmt_dt(nb)} To: {fmt_dt(na)}.")
+                      for i, c in enumerate(certs, start=1):
+                          print(f"\n🔐 Certificate: #{i}")
+                          s = hex_serial(c)
+                          print(f"ℹ️ Serial: {s}.")
+                          print(f"ℹ️ Subject: {subject_str(c)}.")
+                          print(f"ℹ️ Issuer: {issuer_str(c)}.")
+                          print(f"ℹ️ Signature Algorithm: {algo_name(c)}.")
+                          # Gunakan *_utc untuk print juga
+                          try:
+                              nb = c.not_valid_before_utc
+                              na = c.not_valid_after_utc
+                          except AttributeError:
+                              nb = c.not_valid_before.replace(tzinfo=timezone.utc)
+                              na = c.not_valid_after.replace(tzinfo=timezone.utc)
+                          print(f"ℹ️ Validity (GMT): From: {fmt_dt(nb)} To: {fmt_dt(na)}.")
 
-                chk = chain.get(i-1, {})
-                print(f"{'✅' if chk.get('in_chain') else '🔴'} Valid Chain.")
-                print(f"{'✅' if chk.get('serial') else '🔴'} Valid Serial.")
-                print(f"{'✅' if chk.get('subject') else '🔴'} Valid Subject.")
-                print(f"{'✅' if chk.get('issuer') else '🔴'} Valid Issuer.")
-                print(f"{'✅' if chk.get('signature') else '🔴'} Valid Signature.")
-                print(f"{'✅' if chk.get('not_expired') else '🔴'} Not Expired.")
-                if s.lower() in revmap:
-                    print(f"🔴 REVOKED: {revmap[s.lower()]}.")
-                else:
-                    print("✅ Not Revoked.")
+                          chk = chain.get(i-1, {})
+                          print(f"{'✅' if chk.get('in_chain') else '🔴'} Valid Chain.")
+                          print(f"{'✅' if chk.get('serial') else '🔴'} Valid Serial.")
+                          print(f"{'✅' if chk.get('subject') else '🔴'} Valid Subject.")
+                          print(f"{'✅' if chk.get('issuer') else '🔴'} Valid Issuer.")
+                          print(f"{'✅' if chk.get('signature') else '🔴'} Valid Signature.")
+                          print(f"{'✅' if chk.get('not_expired') else '🔴'} Not Expired.")
+                          if s.lower() in revmap:
+                              print(f"🔴 REVOKED: {revmap[s.lower()]}.")
+                          else:
+                              print("✅ Not Revoked.")
 
-            chain_valid_tech = all(v.get("signature") and v.get("not_expired") for v in chain.values())
-            not_revoked = not any(hex_serial(c).lower() in revmap for c in certs)
+                      chain_valid_tech = all(v.get("signature") and v.get("not_expired") for v in chain.values())
+                      not_revoked = not any(hex_serial(c).lower() in revmap for c in certs)
 
-            strong_ok = (
-                alg == "ecdsa"
-                and valid_pk
-                and chain_valid_tech
-                and not_revoked
-            )
+                      strong_ok = (
+                          alg == "ecdsa"
+                          and valid_pk
+                          and chain_valid_tech
+                          and not_revoked
+                      )
 
-            basic_ok = (
-                alg == "rsa"
-                and valid_pk
-                and chain_valid_tech
-                and not_revoked
-            )
+                      basic_ok = (
+                          alg == "rsa"
+                          and valid_pk
+                          and chain_valid_tech
+                          and not_revoked
+                      )
 
-            softban = (
-                alg == "ecdsa"
-                and valid_pk
-                and any(hex_serial(c).lower() in revmap for c in certs)
-            )
+                      softban = (
+                          alg == "ecdsa"
+                          and valid_pk
+                          and any(hex_serial(c).lower() in revmap for c in certs)
+                      )
 
-            print("\n🔎 RESULT: 🔎\n")
-            if strong_ok:
-                print(f"✅ Key Chain #{ch_i} VALID for STRONG integrity.")
-            elif basic_ok:
-                print(f"✅ Key Chain #{ch_i} VALID (Basic/RSA).")
-            elif softban:
-                print(f"❌ Key Chain #{ch_i} not valid for STRONG integrity.")
-                print(f"🟢 Key Chain #{ch_i} VALID SOFTBANNED for DEVICE integrity.")
-            else:
-                print(f"❌ Key Chain #{ch_i} INVALID.")
-            print("\n" + ("-" * 60) + "\n")
+                      print("\n🔎 RESULT: 🔎\n")
+                      if strong_ok:
+                          print(f"✅ Key Chain #{ch_i} VALID for STRONG integrity.")
+                      elif basic_ok:
+                          print(f"✅ Key Chain #{ch_i} VALID (Basic/RSA).")
+                      elif softban:
+                          print(f"❌ Key Chain #{ch_i} not valid for STRONG integrity.")
+                          print(f"🟢 Key Chain #{ch_i} VALID SOFTBANNED for DEVICE integrity.")
+                      else:
+                          print(f"❌ Key Chain #{ch_i} INVALID.")
+                      print("\n" + ("-" * 60) + "\n")
 
-    print("🚨 This KeyBox has been LEAKED." if leaked else "✅ No private keys embedded. Not flagged as leaked.")
-    print("\n[ @KeyBox_Checker ] [ CI v1.1 ]")
+              print("🚨 This KeyBox has been LEAKED." if leaked else "✅ No private keys embedded. Not flagged as leaked.")
+              print("\n[ @KeyBox_Checker ] [ CI v1.1 ]")
 
-if __name__ == "__main__":
-    main()
-PYCODE
+          if __name__ == "__main__":
+              main()
+          PYCODE
 
       - name: Run KeyBox Checker
         shell: bash
