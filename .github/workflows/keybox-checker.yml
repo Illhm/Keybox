@@ -131,9 +131,8 @@ def issuer_str(cert):
 def verify_chain(certs):
     """
     Verifikasi sederhana:
-    - Signature diverifikasi menggunakan public key issuer berikutnya (atau dirinya sendiri jika cert terakhir / self-signed).
+    - Signature diverifikasi menggunakan public key issuer yang ditemukan dalam chain.
     - Cek masa berlaku (timezone-aware).
-    Catatan: Ini bukan path validation PKI lengkap.
     """
     res = {}
     for i, c in enumerate(certs):
@@ -147,31 +146,51 @@ def verify_chain(certs):
         }
         now = datetime.now(timezone.utc)
         try:
-            # cryptography kadang memberi naive datetime (UTC). Samakan ke aware UTC.
-            nb = c.not_valid_before.replace(tzinfo=timezone.utc)
-            na = c.not_valid_after.replace(tzinfo=timezone.utc)
+            # Gunakan *_utc properties untuk menghindari DeprecationWarning
+            try:
+                nb = c.not_valid_before_utc
+                na = c.not_valid_after_utc
+            except AttributeError:
+                nb = c.not_valid_before.replace(tzinfo=timezone.utc)
+                na = c.not_valid_after.replace(tzinfo=timezone.utc)
             checks["not_expired"] = (nb <= now <= na)
         except Exception:
             checks["not_expired"] = False
 
-        issuer = certs[i+1] if i < len(certs) - 1 else c
-        try:
-            pub = issuer.public_key()
-            if isinstance(pub, rsa.RSAPublicKey):
-                pub.verify(
-                    c.signature,
-                    c.tbs_certificate_bytes,
-                    padding.PKCS1v15(),
-                    c.signature_hash_algorithm,
-                )
-            else:
-                pub.verify(
-                    c.signature,
-                    c.tbs_certificate_bytes,
-                    ec.ECDSA(c.signature_hash_algorithm),
-                )
-            checks["signature"] = (c.issuer == issuer.subject)
-        except Exception:
+        # Cari issuer di dalam list certs
+        issuer = None
+        if c.issuer == c.subject:
+            # Self-signed (Root)
+            issuer = c
+        else:
+            # Cari issuer berdasarkan Subject match
+            for candidate in certs:
+                if candidate.subject == c.issuer:
+                    issuer = candidate
+                    break
+
+        if issuer:
+            try:
+                pub = issuer.public_key()
+                if isinstance(pub, rsa.RSAPublicKey):
+                    pub.verify(
+                        c.signature,
+                        c.tbs_certificate_bytes,
+                        padding.PKCS1v15(),
+                        c.signature_hash_algorithm,
+                    )
+                else:
+                    pub.verify(
+                        c.signature,
+                        c.tbs_certificate_bytes,
+                        ec.ECDSA(c.signature_hash_algorithm),
+                    )
+                checks["signature"] = True
+            except Exception:
+                checks["signature"] = False
+        else:
+            # Issuer tidak ditemukan di chain yang diberikan
+            checks["in_chain"] = False
             checks["signature"] = False
 
         res[i] = checks
@@ -234,7 +253,15 @@ def main():
                 print(f"ℹ️ Subject: {subject_str(c)}.")
                 print(f"ℹ️ Issuer: {issuer_str(c)}.")
                 print(f"ℹ️ Signature Algorithm: {algo_name(c)}.")
-                print(f"ℹ️ Validity (GMT): From: {fmt_dt(c.not_valid_before)} To: {fmt_dt(c.not_valid_after)}.")
+                # Gunakan *_utc untuk print juga
+                try:
+                    nb = c.not_valid_before_utc
+                    na = c.not_valid_after_utc
+                except AttributeError:
+                    nb = c.not_valid_before.replace(tzinfo=timezone.utc)
+                    na = c.not_valid_after.replace(tzinfo=timezone.utc)
+                print(f"ℹ️ Validity (GMT): From: {fmt_dt(nb)} To: {fmt_dt(na)}.")
+
                 chk = chain.get(i-1, {})
                 print(f"{'✅' if chk.get('in_chain') else '🔴'} Valid Chain.")
                 print(f"{'✅' if chk.get('serial') else '🔴'} Valid Serial.")
@@ -247,12 +274,23 @@ def main():
                 else:
                     print("✅ Not Revoked.")
 
+            chain_valid_tech = all(v.get("signature") and v.get("not_expired") for v in chain.values())
+            not_revoked = not any(hex_serial(c).lower() in revmap for c in certs)
+
             strong_ok = (
                 alg == "ecdsa"
                 and valid_pk
-                and all(v.get("signature") and v.get("not_expired") for v in chain.values())
-                and not any(hex_serial(c).lower() in revmap for c in certs)
+                and chain_valid_tech
+                and not_revoked
             )
+
+            basic_ok = (
+                alg == "rsa"
+                and valid_pk
+                and chain_valid_tech
+                and not_revoked
+            )
+
             softban = (
                 alg == "ecdsa"
                 and valid_pk
@@ -262,6 +300,8 @@ def main():
             print("\n🔎 RESULT: 🔎\n")
             if strong_ok:
                 print(f"✅ Key Chain #{ch_i} VALID for STRONG integrity.")
+            elif basic_ok:
+                print(f"✅ Key Chain #{ch_i} VALID (Basic/RSA).")
             elif softban:
                 print(f"❌ Key Chain #{ch_i} not valid for STRONG integrity.")
                 print(f"🟢 Key Chain #{ch_i} VALID SOFTBANNED for DEVICE integrity.")
