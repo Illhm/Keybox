@@ -1,0 +1,61 @@
+<?xml version="1.0"?>
+<AndroidAttestation>
+<NumberOfKeyboxes>1</NumberOfKeyboxes>
+<Keybox DeviceID="pMixN">
+<Key algorithm="ecdsa">
+<PrivateKey format="pem">
+-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIEJUyCTuK2lXwCQazKyQwY8s8jey3m19lPHA0rtRb5v6oAoGCCqGSM49
+AwEHoUQDQgAEn1sFv9Gi+Qmn3zn09Vwpck+RKtdDizP6qslpBrpBcukWSMFRb4DT
+GaSpJNsP1jayRDFkq3SJhmcy5pxNIxJvqg==
+-----END EC PRIVATE KEY-----
+</PrivateKey>
+<CertificateChain>
+<NumberOfCertificates>1</NumberOfCertificates>
+<Certificate format="pem">
+-----BEGIN CERTIFICATE-----
+MIIBdzCCAR2gAwIBAgIUbyd9k53jcFQVQbL55SWZ5J6TBUswCgYIKoZIzj0EAwIw
+ETEPMA0GA1UEAwwGS2V5Ym94MB4XDTI1MDYwOTIzMDE1OFoXDTM1MDYwNzIzMDE1
+OFowETEPMA0GA1UEAwwGS2V5Ym94MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE
+n1sFv9Gi+Qmn3zn09Vwpck+RKtdDizP6qslpBrpBcukWSMFRb4DTGaSpJNsP1jay
+RDFkq3SJhmcy5pxNIxJvqqNTMFEwHQYDVR0OBBYEFLjkegCMuYHm6JUbIFamCeyk
+Gv4NMB8GA1UdIwQYMBaAFLjkegCMuYHm6JUbIFamCeykGv4NMA8GA1UdEwEB/wQF
+MAMBAf8wCgYIKoZIzj0EAwIDSAAwRQIgTf6x1jTak3ptpCaTScHVRWFWzGWSRWrk
+hvf8rFXnVb8CIQCsHEFc1SxgZvKYmvaZCaRVBw/Lki1eAT/4rxIsNAvA/Q==
+-----END CERTIFICATE-----
+</Certificate>
+</CertificateChain>
+</Key>
+<Key algorithm="rsa">
+<PrivateKey format="pem">
+-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEAqrJ+AniUrEOXkBU1eBqqcw//WYT4JUw7sSrIrZ74OlhpBBDK
+OgL2Kh5U2TWym01HmbW3jX7hWqMBVUaAE9qP2Ra5XZm3IfveOZszAKVV4T1EvxwM
+eeto01EGeuzO55FK3TROhpVmo9WOJcsCZYx2DsgrfB8RCKtzOEcetX3pfL1tWO5H
+ynoTPgJYxaqzfc0S1bpw6ZL2S83bay2Nht/vl/pF4ioNo3YB/LZhpHNTSed5Gj2H
+ZUb0cgz1cULjUUKps7hXysiUmlXQ/KC8c6hBML5mpaQ68zNlcmF2eCyEieUmIcx9
+1nfy19Hn5eiwpa4kcwnUL1bOjeuE2RcY/hYNbwIDAQABAoIBABnPMYtZGmMDjfvs
+oQWJw/ea1clTeBus76JFmEsxgVHSbVUpNBKFFnMJhrBtqerzyogyDXtY/GTycZtT
+ChQ2afqb23ziEZUTWqdLe/DfOYwmxz69fyDDbeRJri5RoPqAIZmEX6fXbh9b2l7a
+LQDCtf+yghSwiShOQsvMa8HAXy3gzKGyu6T6kGM/2LBay+iXpb9EF/wcjLicwSVa
+DEwm6PJ/gfak3J6hvlJqUERlQnYWHg6c5/HJdeE69s64sCHVugytBHoQd66JPILG
+VVrZrujzXCaZUe19MZ3kChYaUvbE/nqS+Z5hdSXlbtal1eqyCPedcJZ31MRflMOe
+VSxDjYkCgYEA7syqBIrIvfBrWLRBaXoKgCmy9E2k4MUg80w2e2rTW0P7qwvSr3Rl
+YI3DHFbLggNw5WJ/V8HL5Y/Rj6dhp6KLH+d9SYMJwb1cQ+rR6pF2dZtiAJXAiejP
+UNQHW+qDGk/H1SVMf0UIruRUZoLA14WArmgODyD9kiZmJHQGy6jZw/kCgYEAtv4P
+FgqRI1f6WnZt9D8YtbknLwfp6WwP4ZqDr1n04LpW+SoRPLlL//ZvygGdZICbO5KR
+WlRnOuNdOiUOBXR2os7pVR3mJFmU8gJ2OaKY4bqZU7320kpZoco3Fvi6LPUqzMjG
+nxQLSwvpGK+aw2x8Xm9MLeDWrtnY/b6H6uwCZqcCgYEAlsU9qzR83f+Hpy/YBOJ6
+8sRhKoJDUW7lCPfbhjzCSWM46JvEX+bbgwS+ZYwfXW0SwKFZyWygccZGB68kpxSn
+RnN/1QQZCuul73O5KaLB6is6yyfBstD85Amaw9vi/p/UiazNCaXqf5HGABsZ6nlt
+76/fAIpRzw7TeryO9dMb+vECgYAFnXgjCgH4Hqv8+KNZGlKMyPit1cVUt08pcg9W
+YyFDgBRJIwRSY7E0UoCNp00IF3Yr9sxlBDACu5VRwm9StYcqacT5Kqi0Ntd+MZsl
+G5srWgl4a1zWiReFAmp8VveHh6JflE2b9gZ+sAfgDQtnsb2DPFEPG1YbGW4yIxWS
+nNlaAwKBgQDJjeMFVnVkylGjVsQdbC/7O8ac4zAuqzH8pscb1u51eQk9JriB9kOC
+7GFtn1neHNVyPPwWhTUZzMMAUyGfxOLx+PdHSA3cmXGrnX41Xdu24fAnk1IzsPiz
+CZkM8G30zMlT3fnRQW/KHi0pw8u/tdaNkIrpZrmfyzlIrd7uzvaqNg==
+-----END RSA PRIVATE KEY-----
+</PrivateKey>
+</Key>
+</Keybox>
+</AndroidAttestation>
