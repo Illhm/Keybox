@@ -1,11 +1,21 @@
 from __future__ import annotations
-import argparse, sys, json, os
+import argparse, sys, json, os, telebot
 from datetime import datetime, timezone
 from lxml import etree
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from cryptography.hazmat.primitives.asymmetric import ec, rsa, padding
 from cryptography.hazmat.primitives import serialization
 from cryptography import x509
+
+# ==========================================
+# KONFIGURASI BOT
+# ==========================================
+# Masukkan token bot Anda di sini
+TOKEN = "YOUR_TOKEN_HERE"
+
+# ==========================================
+# LOGIKA VALIDASI KEYBOX
+# ==========================================
 
 def load_revocations(path):
     if not path:
@@ -16,7 +26,6 @@ def load_revocations(path):
         # Map serial (lowercase hex) -> policy string
         return {str(s).lower(): d.get("policy", {}).get(str(s), "REVOKED") for s in d.get("serials", [])}
     except Exception as e:
-        # print(f"⚠️ Error reading revocations: {e}")
         return {}
 
 def load_trusted_root(path):
@@ -26,14 +35,12 @@ def load_trusted_root(path):
         with open(path, "rb") as f:
             return x509.load_pem_x509_certificate(f.read())
     except Exception as e:
-        # print(f"⚠️ Failed to load trusted root: {e}")
         return None
 
 def verify_root_trust(chain_root, trusted_root):
     if not trusted_root:
-        return True # Skip if no trusted root provided
+        return True
 
-    # Check if chain_root matches trusted_root by comparing Public Keys
     try:
         return chain_root.public_key().public_bytes(
             encoding=serialization.Encoding.DER,
@@ -53,7 +60,7 @@ def load_certs(pems):
         try:
             certs.append(x509.load_pem_x509_certificate(pem))
         except Exception as e:
-            pass # print(f"⚠️ Failed to load certificate: {e}")
+            pass
     return certs
 
 def check_private_key(alg, pem):
@@ -98,11 +105,6 @@ def issuer_str(cert):
     return ", ".join(parts) if parts else cert.issuer.rfc4514_string()
 
 def verify_chain(certs):
-    """
-    Verifikasi sederhana:
-    - Signature diverifikasi menggunakan public key issuer yang ditemukan dalam chain.
-    - Cek masa berlaku (timezone-aware).
-    """
     res = {}
     for i, c in enumerate(certs):
         checks = {
@@ -115,7 +117,6 @@ def verify_chain(certs):
         }
         now = datetime.now(timezone.utc)
         try:
-            # Gunakan *_utc properties untuk menghindari DeprecationWarning
             try:
                 nb = c.not_valid_before_utc
                 na = c.not_valid_after_utc
@@ -126,13 +127,10 @@ def verify_chain(certs):
         except Exception:
             checks["not_expired"] = False
 
-        # Cari issuer di dalam list certs
         issuer = None
         if c.issuer == c.subject:
-            # Self-signed (Root)
             issuer = c
         else:
-            # Cari issuer berdasarkan Subject match
             for candidate in certs:
                 if candidate.subject == c.issuer:
                     issuer = candidate
@@ -158,7 +156,6 @@ def verify_chain(certs):
             except Exception:
                 checks["signature"] = False
         else:
-            # Issuer tidak ditemukan di chain yang diberikan
             checks["in_chain"] = False
             checks["signature"] = False
 
@@ -195,7 +192,7 @@ def check_keybox(xml_path, rev_path=None, root_path=None):
 
     kboxes = root.findall(".//Keybox")
     leaked = False
-    log(f"💾 File: {xml_path}\n")
+    log(f"💾 File: {os.path.basename(xml_path)}\n")
     if not kboxes:
         return "🔴 Tidak ada <Keybox> di XML."
 
@@ -234,7 +231,7 @@ def check_keybox(xml_path, rev_path=None, root_path=None):
                 log(f"ℹ️ Subject: {subject_str(c)}.")
                 log(f"ℹ️ Issuer: {issuer_str(c)}.")
                 log(f"ℹ️ Signature Algorithm: {algo_name(c)}.")
-                # Gunakan *_utc untuk print juga
+
                 try:
                     nb = c.not_valid_before_utc
                     na = c.not_valid_after_utc
@@ -261,7 +258,6 @@ def check_keybox(xml_path, rev_path=None, root_path=None):
             # Trust Root Check
             is_trusted_root = True
             if trusted_root and certs:
-                # The last certificate in the chain is typically the root
                 chain_root = certs[-1]
                 is_trusted_root = verify_root_trust(chain_root, trusted_root)
                 if not is_trusted_root:
@@ -314,19 +310,73 @@ def check_keybox(xml_path, rev_path=None, root_path=None):
 
     return "\n".join(output)
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("xml", help="Path ke KeyBox XML")
-    ap.add_argument("--revocations", help="Path JSON revocation (opsional)")
-    args = ap.parse_args()
+# ==========================================
+# TELEGRAM BOT HANDLERS
+# ==========================================
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_revocations = os.path.join(script_dir, "revoked.json")
-    default_root = os.path.join(script_dir, "google_root.pem")
+try:
+    bot = telebot.TeleBot(TOKEN)
+except Exception as e:
+    print(f"⚠️ Warning: Bot initialization failed (probably invalid TOKEN). Script can still be imported. Error: {e}")
+    bot = None
 
-    rev_path = args.revocations if args.revocations else (default_revocations if os.path.exists(default_revocations) else None)
+if bot:
+    @bot.message_handler(commands=['start', 'help'])
+    def send_welcome(message):
+        bot.reply_to(message, "Halo! Kirimkan file Keybox XML untuk diperiksa.\n\n"
+                              "Bot ini berjalan tanpa environment variable file (.env) sesuai permintaan.\n"
+                              "Pastikan TOKEN di script sudah diisi.")
 
-    print(check_keybox(args.xml, rev_path, default_root))
+    @bot.message_handler(content_types=['document'])
+    def handle_docs(message):
+        temp_filename = None
+        try:
+            file_info = bot.get_file(message.document.file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+
+            # Save to a temporary file
+            safe_name = os.path.basename(message.document.file_name)
+            # Avoid overwriting existing files or sensitive paths
+            temp_filename = f"temp_{int(datetime.now().timestamp())}_{safe_name}"
+
+            with open(temp_filename, 'wb') as new_file:
+                new_file.write(downloaded_file)
+
+            bot.reply_to(message, "File diterima, sedang memeriksa...")
+
+            # Determine paths (same dir as this script)
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            default_revocations = os.path.join(script_dir, "revoked.json")
+            default_root = os.path.join(script_dir, "google_root.pem")
+
+            rev_path = default_revocations if os.path.exists(default_revocations) else None
+
+            # Run check
+            result = check_keybox(temp_filename, rev_path, default_root)
+
+            # Telegram message limit is 4096.
+            if len(result) > 4000:
+                for x in range(0, len(result), 4000):
+                    bot.reply_to(message, result[x:x+4000])
+            else:
+                bot.reply_to(message, result)
+
+        except Exception as e:
+            bot.reply_to(message, f"Terjadi kesalahan: {e}")
+        finally:
+            # Cleanup
+            if temp_filename and os.path.exists(temp_filename):
+                try:
+                    os.remove(temp_filename)
+                except Exception:
+                    pass
 
 if __name__ == "__main__":
-    main()
+    if bot:
+        print("Bot sedang berjalan... (Tekan Ctrl+C untuk berhenti)")
+        try:
+            bot.polling()
+        except Exception as e:
+            print(f"Error polling: {e}")
+    else:
+        print("❌ Bot not initialized. Please set a valid TOKEN in the script.")
