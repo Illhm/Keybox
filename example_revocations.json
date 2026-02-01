@@ -1,0 +1,17 @@
+{
+  "serials": [
+    "282c6620850d3ee8f48fa6cbf7c40b36",
+    "95424d3dbd29ca3a25bdcac5ee51187c",
+    "c36b7c44b9ae1831",
+    "a29fc7e8ec73edf5dfe3b62810daef7",
+    "95696bc24f6b4e1b2f5e5399e0c92bee",
+    "c36b7c44b9ae1831"
+  ],
+  "policy": {
+    "282c6620850d3ee8f48fa6cbf7c40b36": "REVOKED",
+    "95424d3dbd29ca3a25bdcac5ee51187c": "REVOKED",
+    "c36b7c44b9ae1831": "REVOKED",
+    "a29fc7e8ec73edf5dfe3b62810daef7": "REVOKED",
+    "95696bc24f6b4e1b2f5e5399e0c92bee": "REVOKED"
+  }
+}

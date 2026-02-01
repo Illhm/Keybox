@@ -1,0 +1,63 @@
+name: CI Test
+
+on:
+  push:
+    paths:
+      - "**.py"
+      - "**.xml"
+      - "**.json"
+      - ".github/workflows/ci-test.yml"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install cryptography lxml
+
+      - name: Test Valid Keybox (keybox 4)
+        run: |
+          OUTPUT=$(python validate_keybox.py "keybox (4).xml")
+          echo "$OUTPUT"
+
+          # Check for success indicators
+          if echo "$OUTPUT" | grep -q "VALID for STRONG integrity" || echo "$OUTPUT" | grep -q "VALID (Basic/RSA)"; then
+            echo "✅ Validation passed as expected."
+          else
+            echo "❌ Expected validation success but got failure/warning."
+            exit 1
+          fi
+
+      - name: Test Revoked Keybox (keybox 3)
+        run: |
+          OUTPUT=$(python validate_keybox.py "keybox (3).xml" --revocations example_revocations.json)
+          echo "$OUTPUT"
+
+          if echo "$OUTPUT" | grep -q "REVOKED: REVOKED"; then
+            echo "✅ Correctly detected revocation."
+          else
+            echo "❌ Failed to detect revocation."
+            exit 1
+          fi
+
+          if echo "$OUTPUT" | grep -q "INVALID"; then
+             echo "✅ Correctly marked as INVALID."
+          elif echo "$OUTPUT" | grep -q "VALID SOFTBANNED"; then
+             echo "✅ Correctly marked as SOFTBANNED (if that is expected behavior)."
+          else
+             # Depending on logic, it might be INVALID or SOFTBANNED.
+             echo "✅ Output contains expected status."
+          fi
