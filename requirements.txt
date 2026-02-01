@@ -1,0 +1,4 @@
+lxml
+cryptography
+requests
+pyTelegramBotAPI

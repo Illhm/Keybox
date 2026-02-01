@@ -16,7 +16,7 @@ def load_revocations(path):
         # Map serial (lowercase hex) -> policy string
         return {str(s).lower(): d.get("policy", {}).get(str(s), "REVOKED") for s in d.get("serials", [])}
     except Exception as e:
-        print(f"⚠️ Error reading revocations: {e}")
+        # print(f"⚠️ Error reading revocations: {e}")
         return {}
 
 def load_trusted_root(path):
@@ -26,7 +26,7 @@ def load_trusted_root(path):
         with open(path, "rb") as f:
             return x509.load_pem_x509_certificate(f.read())
     except Exception as e:
-        print(f"⚠️ Failed to load trusted root: {e}")
+        # print(f"⚠️ Failed to load trusted root: {e}")
         return None
 
 def verify_root_trust(chain_root, trusted_root):
@@ -53,7 +53,7 @@ def load_certs(pems):
         try:
             certs.append(x509.load_pem_x509_certificate(pem))
         except Exception as e:
-            print(f"⚠️ Failed to load certificate: {e}")
+            pass # print(f"⚠️ Failed to load certificate: {e}")
     return certs
 
 def check_private_key(alg, pem):
@@ -168,44 +168,42 @@ def verify_chain(certs):
 def hex_serial(c): return f"{c.serial_number:x}"
 def fmt_dt(dt): return dt.strftime("%d/%b/%Y")
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("xml", help="Path ke KeyBox XML")
-    ap.add_argument("--revocations", help="Path JSON revocation (opsional)")
-    args = ap.parse_args()
+def check_keybox(xml_path, rev_path=None, root_path=None):
+    output = []
+    def log(msg=""):
+        output.append(str(msg))
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_revocations = os.path.join(script_dir, "revoked.json")
-    default_root = os.path.join(script_dir, "google_root.pem")
-
-    rev_path = args.revocations if args.revocations else (default_revocations if os.path.exists(default_revocations) else None)
     revmap = load_revocations(rev_path)
 
-    trusted_root = load_trusted_root(default_root)
+    trusted_root = load_trusted_root(root_path)
     if trusted_root:
-        print(f"🛡️ Trusted Root loaded from {os.path.basename(default_root)}")
+        log(f"🛡️ Trusted Root loaded from {os.path.basename(root_path)}")
 
-    with open(args.xml, "rb") as f:
-        xml = f.read()
+    if not os.path.exists(xml_path):
+        return f"🔴 File not found: {xml_path}"
+
+    try:
+        with open(xml_path, "rb") as f:
+            xml = f.read()
+    except Exception as e:
+        return f"🔴 Error reading file: {e}"
 
     try:
         root = etree.fromstring(xml)
     except Exception as e:
-        print(f"🔴 XML tidak valid: {e}")
-        sys.exit(2)
+        return f"🔴 XML tidak valid: {e}"
 
     kboxes = root.findall(".//Keybox")
     leaked = False
-    print(f"💾 File: {args.xml}\n")
+    log(f"💾 File: {xml_path}\n")
     if not kboxes:
-        print("🔴 Tidak ada <Keybox> di XML.")
-        sys.exit(1)
+        return "🔴 Tidak ada <Keybox> di XML."
 
     for kb_i, kb in enumerate(kboxes, start=1):
         keys = kb.findall("./Key")
         for ch_i, key in enumerate(keys, start=1):
             alg = (key.get("algorithm") or "").lower()
-            print(f"🔑 Key Chain: #{ch_i}")
+            log(f"🔑 Key Chain: #{ch_i}")
             # Private Key
             priv_node = key.find("./PrivateKey")
             valid_pk = False
@@ -214,9 +212,9 @@ def main():
                 pem = (priv_node.text or "").strip().encode()
                 valid_pk = check_private_key(alg, pem)
                 t = "EC" if alg == "ecdsa" else ("RSA" if alg == "rsa" else "Unknown")
-                print(f"{'✅' if valid_pk else '🔴'} {'Valid' if valid_pk else 'Invalid'} {t} Private Key.")
+                log(f"{'✅' if valid_pk else '🔴'} {'Valid' if valid_pk else 'Invalid'} {t} Private Key.")
             else:
-                print("⚠️ Tanpa Private Key di XML.")
+                log("⚠️ Tanpa Private Key di XML.")
 
             # Certificate chain
             cert_nodes = key.findall("./CertificateChain/Certificate")
@@ -225,17 +223,17 @@ def main():
 
             has_certs = len(certs) > 0
             if not has_certs:
-                print("⚠️ No certificates found in chain.")
+                log("⚠️ No certificates found in chain.")
 
             chain = verify_chain(certs)
 
             for i, c in enumerate(certs, start=1):
-                print(f"\n🔐 Certificate: #{i}")
+                log(f"\n🔐 Certificate: #{i}")
                 s = hex_serial(c)
-                print(f"ℹ️ Serial: {s}.")
-                print(f"ℹ️ Subject: {subject_str(c)}.")
-                print(f"ℹ️ Issuer: {issuer_str(c)}.")
-                print(f"ℹ️ Signature Algorithm: {algo_name(c)}.")
+                log(f"ℹ️ Serial: {s}.")
+                log(f"ℹ️ Subject: {subject_str(c)}.")
+                log(f"ℹ️ Issuer: {issuer_str(c)}.")
+                log(f"ℹ️ Signature Algorithm: {algo_name(c)}.")
                 # Gunakan *_utc untuk print juga
                 try:
                     nb = c.not_valid_before_utc
@@ -243,19 +241,19 @@ def main():
                 except AttributeError:
                     nb = c.not_valid_before.replace(tzinfo=timezone.utc)
                     na = c.not_valid_after.replace(tzinfo=timezone.utc)
-                print(f"ℹ️ Validity (GMT): From: {fmt_dt(nb)} To: {fmt_dt(na)}.")
+                log(f"ℹ️ Validity (GMT): From: {fmt_dt(nb)} To: {fmt_dt(na)}.")
 
                 chk = chain.get(i-1, {})
-                print(f"{'✅' if chk.get('in_chain') else '🔴'} Valid Chain.")
-                print(f"{'✅' if chk.get('serial') else '🔴'} Valid Serial.")
-                print(f"{'✅' if chk.get('subject') else '🔴'} Valid Subject.")
-                print(f"{'✅' if chk.get('issuer') else '🔴'} Valid Issuer.")
-                print(f"{'✅' if chk.get('signature') else '🔴'} Valid Signature.")
-                print(f"{'✅' if chk.get('not_expired') else '🔴'} Not Expired.")
+                log(f"{'✅' if chk.get('in_chain') else '🔴'} Valid Chain.")
+                log(f"{'✅' if chk.get('serial') else '🔴'} Valid Serial.")
+                log(f"{'✅' if chk.get('subject') else '🔴'} Valid Subject.")
+                log(f"{'✅' if chk.get('issuer') else '🔴'} Valid Issuer.")
+                log(f"{'✅' if chk.get('signature') else '🔴'} Valid Signature.")
+                log(f"{'✅' if chk.get('not_expired') else '🔴'} Not Expired.")
                 if s.lower() in revmap:
-                    print(f"🔴 REVOKED: {revmap[s.lower()]}.")
+                    log(f"🔴 REVOKED: {revmap[s.lower()]}.")
                 else:
-                    print("✅ Not Revoked.")
+                    log("✅ Not Revoked.")
 
             chain_valid_tech = all(v.get("signature") and v.get("not_expired") for v in chain.values())
             not_revoked = not any(hex_serial(c).lower() in revmap for c in certs)
@@ -263,16 +261,13 @@ def main():
             # Trust Root Check
             is_trusted_root = True
             if trusted_root and certs:
-                # The last certificate in the chain is typically the root (or issued by root if incomplete, but Keybox usually has full chain)
+                # The last certificate in the chain is typically the root
                 chain_root = certs[-1]
                 is_trusted_root = verify_root_trust(chain_root, trusted_root)
                 if not is_trusted_root:
-                    print(f"🔴 Root Verification: FAILED. Root does not match trusted Google Root.")
+                    log(f"🔴 Root Verification: FAILED. Root does not match trusted Google Root.")
                 else:
-                    print(f"✅ Root Verification: PASSED. Trusted Google Root.")
-
-            # Logic Update: Untrusted root downgrades validity or invalidates?
-            # User wants a 'real checker'. A real checker rejects untrusted roots.
+                    log(f"✅ Root Verification: PASSED. Trusted Google Root.")
 
             strong_ok = (
                 alg == "ecdsa"
@@ -299,23 +294,39 @@ def main():
                 and any(hex_serial(c).lower() in revmap for c in certs)
             )
 
-            print("\n🔎 RESULT: 🔎\n")
+            log("\n🔎 RESULT: 🔎\n")
             if strong_ok:
-                print(f"✅ Key Chain #{ch_i} VALID for STRONG integrity.")
+                log(f"✅ Key Chain #{ch_i} VALID for STRONG integrity.")
             elif basic_ok:
-                print(f"✅ Key Chain #{ch_i} VALID (Basic/RSA).")
+                log(f"✅ Key Chain #{ch_i} VALID (Basic/RSA).")
             elif softban:
-                print(f"❌ Key Chain #{ch_i} REVOKED/SOFTBANNED (Device ID or Cert revoked).")
+                log(f"❌ Key Chain #{ch_i} REVOKED/SOFTBANNED (Device ID or Cert revoked).")
             elif not has_certs:
-                 print(f"❌ Key Chain #{ch_i} INVALID (No Certificates).")
+                 log(f"❌ Key Chain #{ch_i} INVALID (No Certificates).")
             elif not is_trusted_root:
-                print(f"❌ Key Chain #{ch_i} INVALID (Untrusted Root).")
+                log(f"❌ Key Chain #{ch_i} INVALID (Untrusted Root).")
             else:
-                print(f"❌ Key Chain #{ch_i} INVALID.")
-            print("\n" + ("-" * 60) + "\n")
+                log(f"❌ Key Chain #{ch_i} INVALID.")
+            log("\n" + ("-" * 60) + "\n")
 
-    print("🚨 This KeyBox has been LEAKED." if leaked else "✅ No private keys embedded. Not flagged as leaked.")
-    print("\n[ @KeyBox_Checker ] [ CI v1.1 ]")
+    log("🚨 This KeyBox has been LEAKED." if leaked else "✅ No private keys embedded. Not flagged as leaked.")
+    log("\n[ @KeyBox_Checker ] [ CI v1.1 ]")
+
+    return "\n".join(output)
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("xml", help="Path ke KeyBox XML")
+    ap.add_argument("--revocations", help="Path JSON revocation (opsional)")
+    args = ap.parse_args()
+
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    default_revocations = os.path.join(script_dir, "revoked.json")
+    default_root = os.path.join(script_dir, "google_root.pem")
+
+    rev_path = args.revocations if args.revocations else (default_revocations if os.path.exists(default_revocations) else None)
+
+    print(check_keybox(args.xml, rev_path, default_root))
 
 if __name__ == "__main__":
     main()
