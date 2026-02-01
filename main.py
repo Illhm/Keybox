@@ -201,6 +201,14 @@ def check_keybox(xml_path, rev_path=None, root_path=None):
         for ch_i, key in enumerate(keys, start=1):
             alg = (key.get("algorithm") or "").lower()
             log(f"🔑 Key Chain: #{ch_i}")
+
+            if alg == "nbs":
+                log("⚠️ Ignoring the NBS Key.")
+                log("\n🔎 RESULT: 🔎\n")
+                log(f"⚠️ Key Chain #{ch_i} ignored.")
+                log("\n" + ("-" * 60) + "\n")
+                continue
+
             # Private Key
             priv_node = key.find("./PrivateKey")
             valid_pk = False
