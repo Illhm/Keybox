@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse, sys, json, os
+import argparse, sys, json, os, urllib.request
 from datetime import datetime, timezone
 from lxml import etree
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
@@ -175,6 +175,9 @@ def check_keybox(xml_path, rev_path=None, root_path=None):
 
     revmap = load_revocations(rev_path)
 
+    # Global cache for downloaded CRLs during a run
+    crl_cache = {}
+
     trusted_root = load_trusted_root(root_path)
 
     if not os.path.exists(xml_path):
@@ -220,8 +223,43 @@ def check_keybox(xml_path, rev_path=None, root_path=None):
             has_certs = len(certs) > 0
 
             chain = verify_chain(certs)
+            # Check CRL distribution points for each cert
+            crl_revoked_certs = set()
+            for c in certs:
+                try:
+                    ext = c.extensions.get_extension_for_oid(x509.ExtensionOID.CRL_DISTRIBUTION_POINTS)
+                    for dp in ext.value:
+                        for name in dp.full_name:
+                            url = name.value
+                            if url and url.startswith("http"):
+                                if url not in crl_cache:
+                                    try:
+                                        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                                        with urllib.request.urlopen(req, timeout=5) as resp:
+                                            content = resp.read()
+                                            if b"-----BEGIN X509 CRL-----" in content:
+                                                crl_cache[url] = x509.load_pem_x509_crl(content)
+                                            else:
+                                                crl_cache[url] = x509.load_der_x509_crl(content)
+                                    except Exception:
+                                        crl_cache[url] = None # Failed to fetch or parse
+
+                                crl = crl_cache.get(url)
+                                if crl:
+                                    revoked = crl.get_revoked_certificate_by_serial_number(c.serial_number)
+                                    if revoked:
+                                        crl_revoked_certs.add(hex_serial(c).lower())
+                except x509.ExtensionNotFound:
+                    pass
+
             chain_valid_tech = all(v.get("signature") and v.get("not_expired") for v in chain.values()) if chain else False
-            not_revoked = not any(hex_serial(c).lower() in revmap for c in certs)
+
+            not_revoked = True
+            for c in certs:
+                s_hex = hex_serial(c).lower()
+                if s_hex in revmap or s_hex in crl_revoked_certs:
+                    not_revoked = False
+                    break
 
             is_trusted_root = True
             if trusted_root and certs:
@@ -250,7 +288,7 @@ def check_keybox(xml_path, rev_path=None, root_path=None):
                 alg == "ecdsa"
                 and valid_pk
                 and has_certs
-                and any(hex_serial(c).lower() in revmap for c in certs)
+                and not not_revoked
             )
 
             if strong_ok:
@@ -345,8 +383,11 @@ def check_keybox(xml_path, rev_path=None, root_path=None):
                 else:
                     log("Certificate EXPIRED or not yet valid")
 
-                if s.lower() in revmap:
-                    log(f"REVOKED: {revmap[s.lower()]}")
+                s_lower = s.lower()
+                if s_lower in revmap:
+                    log(f"REVOKED: {revmap[s_lower]}")
+                elif s_lower in crl_revoked_certs:
+                    log(f"REVOKED: Revoked via CRL Distribution Point")
                 else:
                     log("Serial number not found in Google's revoked keybox list")
 
